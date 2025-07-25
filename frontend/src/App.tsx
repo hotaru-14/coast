@@ -50,6 +50,7 @@ function App() {
               <VisitHistoryList 
                 onLocationFocus={setFocusLocation}
                 showComments={true}
+                showPhotos={true}
               />
             </div>
           </div>
