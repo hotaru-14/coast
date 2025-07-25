@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../services/apiConfig';
 import type { Visit } from '../services/coastApi';
+import VisitCommentComponent from './VisitComment';
 
 // 海岸線の座標を解析する関数
 const parseLineString = (geometry: any): [number, number][] => {
@@ -21,15 +22,18 @@ const parseLineString = (geometry: any): [number, number][] => {
 interface VisitHistoryListProps {
   className?: string;
   onLocationFocus?: (location: [number, number]) => void;
+  showComments?: boolean;
 }
 
 export const VisitHistoryList: React.FC<VisitHistoryListProps> = ({ 
   className = '',
-  onLocationFocus 
+  onLocationFocus,
+  showComments = false
 }) => {
   const [visits, setVisits] = useState<Visit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedVisits, setExpandedVisits] = useState<Set<string>>(new Set());
 
   // 訪問履歴を取得
   const fetchVisits = async () => {
@@ -80,6 +84,17 @@ export const VisitHistoryList: React.FC<VisitHistoryListProps> = ({
     } catch {
       return dateString;
     }
+  };
+
+  // 訪問の展開状態を切り替え
+  const toggleExpanded = (visitId: string) => {
+    const newExpanded = new Set(expandedVisits);
+    if (newExpanded.has(visitId)) {
+      newExpanded.delete(visitId);
+    } else {
+      newExpanded.add(visitId);
+    }
+    setExpandedVisits(newExpanded);
   };
 
   if (loading) {
@@ -134,31 +149,62 @@ export const VisitHistoryList: React.FC<VisitHistoryListProps> = ({
           </div>
         ) : (
           <div className="space-y-2 max-h-96 overflow-y-auto">
-            {visits.map((visit) => (
-              <div
-                key={visit.id}
-                onClick={() => handleItemClick(visit)}
-                className={`p-3 bg-white rounded border hover:bg-blue-50 transition-colors ${
-                  onLocationFocus ? 'cursor-pointer hover:border-blue-300' : ''
-                }`}
-              >
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <h4 className="font-medium text-gray-900">
-                      {visit.coastline.name || visit.coastline.id}
-                    </h4>
-                    <p className="text-sm text-gray-600 mt-1">
-                      {formatDate(visit.visitedAt)}
-                    </p>
+            {visits.map((visit) => {
+              const isExpanded = expandedVisits.has(visit.id);
+              
+              return (
+                <div
+                  key={visit.id}
+                  className="bg-white rounded border hover:border-blue-300 transition-colors"
+                >
+                  <div
+                    onClick={() => handleItemClick(visit)}
+                    className={`p-3 ${onLocationFocus ? 'cursor-pointer hover:bg-blue-50' : ''}`}
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <h4 className="font-medium text-gray-900">
+                          {visit.coastline.name || visit.coastline.id}
+                        </h4>
+                        <p className="text-sm text-gray-600 mt-1">
+                          {formatDate(visit.visitedAt)}
+                        </p>
+                      </div>
+                      
+                      <div className="flex items-center space-x-2">
+                        {showComments && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleExpanded(visit.id);
+                            }}
+                            className="text-sm text-gray-500 hover:text-gray-700"
+                          >
+                            {isExpanded ? '▼' : '▶'} コメント
+                          </button>
+                        )}
+                        
+                        {onLocationFocus && (
+                          <div className="text-blue-500">
+                            <span className="text-sm">📍</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  {onLocationFocus && (
-                    <div className="ml-2 text-blue-500">
-                      <span className="text-sm">📍</span>
+                  
+                  {showComments && isExpanded && (
+                    <div className="px-3 pb-3 border-t bg-gray-50">
+                      <VisitCommentComponent
+                        visitId={visit.id}
+                        expanded={true}
+                        className="mt-3"
+                      />
                     </div>
                   )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

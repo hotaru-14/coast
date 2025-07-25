@@ -57,6 +57,34 @@ export interface HealthCheckResponse {
   distance_limit?: string;
 }
 
+// 新機能の型定義
+export interface UserProfile {
+  id: string;
+  display_name?: string;
+  avatar_url?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface VisitComment {
+  id: string;
+  visit_id: string;
+  title?: string;
+  content?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpdateProfileRequest {
+  display_name?: string;
+  avatar_url?: string;
+}
+
+export interface UpsertCommentRequest {
+  title?: string;
+  content?: string;
+}
+
 // APIクライアントクラス
 class CoastApiClient {
   private baseURL: string;
@@ -178,6 +206,141 @@ class CoastApiClient {
     } catch (error) {
       console.error('Find nearest coastline error:', error);
       return { distance: Infinity };
+    }
+  }
+
+  // --- プロファイル管理API ---
+
+  // プロファイル取得
+  async getProfile(): Promise<UserProfile> {
+    try {
+      const headers = await this.getAuthHeaders();
+      
+      const response = await fetch(`${this.baseURL}/api/profile`, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('認証が必要です。ログインしてください。');
+        }
+        throw new Error(`Failed to fetch profile: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Get profile error:', error);
+      throw error;
+    }
+  }
+
+  // プロファイル更新
+  async updateProfile(profile: UpdateProfileRequest): Promise<UserProfile> {
+    try {
+      const headers = await this.getAuthHeaders();
+      
+      const response = await fetch(`${this.baseURL}/api/profile`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(profile),
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('認証が必要です。ログインしてください。');
+        }
+        throw new Error(`Failed to update profile: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Update profile error:', error);
+      throw error;
+    }
+  }
+
+  // --- コメント管理API ---
+
+  // コメント取得
+  async getComment(visitId: string): Promise<VisitComment | null> {
+    try {
+      const headers = await this.getAuthHeaders();
+      
+      const response = await fetch(`${this.baseURL}/api/visits/${visitId}/comment`, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('認証が必要です。ログインしてください。');
+        }
+        if (response.status === 404) {
+          throw new Error('訪問が見つからないか、アクセス権限がありません。');
+        }
+        throw new Error(`Failed to fetch comment: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Get comment error:', error);
+      throw error;
+    }
+  }
+
+  // コメント作成・更新
+  async upsertComment(visitId: string, comment: UpsertCommentRequest): Promise<VisitComment> {
+    try {
+      const headers = await this.getAuthHeaders();
+      
+      const response = await fetch(`${this.baseURL}/api/visits/${visitId}/comment`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(comment),
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('認証が必要です。ログインしてください。');
+        }
+        if (response.status === 404) {
+          throw new Error('訪問が見つからないか、アクセス権限がありません。');
+        }
+        throw new Error(`Failed to upsert comment: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Upsert comment error:', error);
+      throw error;
+    }
+  }
+
+  // コメント削除
+  async deleteComment(visitId: string): Promise<{ message: string }> {
+    try {
+      const headers = await this.getAuthHeaders();
+      
+      const response = await fetch(`${this.baseURL}/api/visits/${visitId}/comment`, {
+        method: 'DELETE',
+        headers,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('認証が必要です。ログインしてください。');
+        }
+        if (response.status === 404) {
+          throw new Error('訪問が見つからないか、アクセス権限がありません。');
+        }
+        throw new Error(`Failed to delete comment: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Delete comment error:', error);
+      throw error;
     }
   }
 }
