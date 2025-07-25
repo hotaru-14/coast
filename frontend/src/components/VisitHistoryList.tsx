@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { apiClient } from '../services/apiConfig';
 import type { Visit } from '../services/coastApi';
 import VisitCommentComponent from './VisitComment';
+import VisitPhotosComponent from './VisitPhotos';
 
 // 海岸線の座標を解析する関数
 const parseLineString = (geometry: any): [number, number][] => {
@@ -23,17 +24,20 @@ interface VisitHistoryListProps {
   className?: string;
   onLocationFocus?: (location: [number, number]) => void;
   showComments?: boolean;
+  showPhotos?: boolean;
 }
 
 export const VisitHistoryList: React.FC<VisitHistoryListProps> = ({ 
   className = '',
   onLocationFocus,
-  showComments = false
+  showComments = false,
+  showPhotos = false
 }) => {
   const [visits, setVisits] = useState<Visit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedVisits, setExpandedVisits] = useState<Set<string>>(new Set());
+  const [activeTab, setActiveTab] = useState<Record<string, 'comment' | 'photos'>>({});
 
   // 訪問履歴を取得
   const fetchVisits = async () => {
@@ -93,8 +97,17 @@ export const VisitHistoryList: React.FC<VisitHistoryListProps> = ({
       newExpanded.delete(visitId);
     } else {
       newExpanded.add(visitId);
+      // 初回展開時はコメントタブをデフォルトに
+      if (!activeTab[visitId]) {
+        setActiveTab(prev => ({ ...prev, [visitId]: 'comment' }));
+      }
     }
     setExpandedVisits(newExpanded);
+  };
+
+  // タブ切り替え
+  const switchTab = (visitId: string, tab: 'comment' | 'photos') => {
+    setActiveTab(prev => ({ ...prev, [visitId]: tab }));
   };
 
   if (loading) {
@@ -172,7 +185,7 @@ export const VisitHistoryList: React.FC<VisitHistoryListProps> = ({
                       </div>
                       
                       <div className="flex items-center space-x-2">
-                        {showComments && (
+                        {(showComments || showPhotos) && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -180,7 +193,8 @@ export const VisitHistoryList: React.FC<VisitHistoryListProps> = ({
                             }}
                             className="text-sm text-gray-500 hover:text-gray-700"
                           >
-                            {isExpanded ? '▼' : '▶'} コメント
+                            {isExpanded ? '▼' : '▶'} 
+                            {showComments && showPhotos ? ' 詳細' : showComments ? ' コメント' : ' 写真'}
                           </button>
                         )}
                         
@@ -193,13 +207,58 @@ export const VisitHistoryList: React.FC<VisitHistoryListProps> = ({
                     </div>
                   </div>
                   
-                  {showComments && isExpanded && (
-                    <div className="px-3 pb-3 border-t bg-gray-50">
-                      <VisitCommentComponent
-                        visitId={visit.id}
-                        expanded={true}
-                        className="mt-3"
-                      />
+                  {(showComments || showPhotos) && isExpanded && (
+                    <div className="border-t bg-gray-50">
+                      {/* タブヘッダー */}
+                      {showComments && showPhotos && (
+                        <div className="flex border-b bg-white">
+                          <button
+                            onClick={() => switchTab(visit.id, 'comment')}
+                            className={`flex-1 px-3 py-2 text-sm font-medium ${
+                              activeTab[visit.id] === 'comment' || !activeTab[visit.id]
+                                ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50'
+                                : 'text-gray-500 hover:text-gray-700'
+                            }`}
+                          >
+                            💬 コメント
+                          </button>
+                          <button
+                            onClick={() => switchTab(visit.id, 'photos')}
+                            className={`flex-1 px-3 py-2 text-sm font-medium ${
+                              activeTab[visit.id] === 'photos'
+                                ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50'
+                                : 'text-gray-500 hover:text-gray-700'
+                            }`}
+                          >
+                            📷 写真
+                          </button>
+                        </div>
+                      )}
+                      
+                      {/* タブコンテンツ */}
+                      <div className="px-3 pb-3">
+                        {/* コメントタブ */}
+                        {showComments && (
+                          (!showPhotos || activeTab[visit.id] === 'comment' || !activeTab[visit.id]) && (
+                            <VisitCommentComponent
+                              visitId={visit.id}
+                              expanded={true}
+                              className="mt-3"
+                            />
+                          )
+                        )}
+                        
+                        {/* 写真タブ */}
+                        {showPhotos && (
+                          (!showComments || activeTab[visit.id] === 'photos') && (
+                            <VisitPhotosComponent
+                              visitId={visit.id}
+                              expanded={true}
+                              className="mt-3"
+                            />
+                          )
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
