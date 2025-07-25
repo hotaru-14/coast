@@ -3,6 +3,9 @@ import { cors } from 'hono/cors';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { serve } from '@hono/node-server';
 import dotenv from 'dotenv';
+import multer from 'multer';
+import sharp from 'sharp';
+import { Readable } from 'stream';
 
 // 環境変数を読み込み
 dotenv.config();
@@ -451,6 +454,351 @@ app.delete('/api/visits/:visitId/comment', async (c) => {
     }
     
     return c.json({ message: 'Comment deleted successfully' });
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// --- 写真管理エンドポイント ---
+
+// POST /api/visits/:visitId/photos - 写真アップロード
+app.post('/api/visits/:visitId/photos', async (c) => {
+  const supabase = c.get('supabase');
+  const visitId = c.req.param('visitId');
+  
+  try {
+    // 現在のユーザー情報を取得
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !userData.user) {
+      console.error('Auth error:', userError);
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+    
+    // 訪問が自分のものか確認
+    const { data: visitData, error: visitError } = await supabase
+      .from('visits')
+      .select('id')
+      .eq('id', visitId)
+      .eq('user_id', userData.user.id)
+      .single();
+    
+    if (visitError || !visitData) {
+      console.error('Visit verification failed:', { visitId, userId: userData.user.id, visitError });
+      return c.json({ error: 'Visit not found or access denied' }, 404);
+    }
+    
+    // multipart/form-dataを解析
+    const formData = await c.req.formData();
+    const file = formData.get('file') as File;
+    const isPrimary = formData.get('is_primary') === 'true';
+    
+    if (!file) {
+      return c.json({ error: 'No file uploaded' }, 400);
+    }
+    
+    // ファイル検証
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      return c.json({ error: 'Invalid file type. Only JPEG, PNG, and WebP are allowed.' }, 400);
+    }
+    
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (file.size > maxSize) {
+      return c.json({ error: 'File too large. Maximum size is 10MB.' }, 400);
+    }
+    
+    // ファイルを Buffer に変換
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    
+    // Sharp で画像を処理（リサイズ・最適化）
+    const processedImage = await sharp(buffer)
+      .resize(1920, 1920, { 
+        fit: 'inside',
+        withoutEnlargement: true
+      })
+      .jpeg({ quality: 85 })
+      .toBuffer();
+    
+    // 画像メタデータを取得
+    const metadata = await sharp(processedImage).metadata();
+    
+    // ファイル名を生成
+    const fileExtension = 'jpg'; // 常にJPEGに変換
+    const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExtension}`;
+    const storagePath = `${userData.user.id}/${visitId}/${fileName}`;
+    
+    // Supabase Storage にアップロード
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('visit-photos')
+      .upload(storagePath, processedImage, {
+        contentType: 'image/jpeg',
+        upsert: false
+      });
+    
+    if (uploadError) {
+      console.error('Upload error:', uploadError);
+      return c.json({ error: 'Failed to upload image' }, 500);
+    }
+    
+    // メイン写真に設定する場合、他のメイン写真を解除
+    if (isPrimary) {
+      await supabase
+        .from('visit_photos')
+        .update({ is_primary: false })
+        .eq('visit_id', visitId);
+    }
+    
+    // データベースに写真情報を保存
+    const { data: photoData, error: dbError } = await supabase
+      .from('visit_photos')
+      .insert({
+        visit_id: visitId,
+        storage_path: storagePath,
+        file_name: file.name,
+        file_size_bytes: processedImage.length,
+        mime_type: 'image/jpeg',
+        is_primary: isPrimary,
+        width: metadata.width,
+        height: metadata.height,
+        sort_order: 0
+      })
+      .select('id, storage_path, file_name, file_size_bytes, mime_type, is_primary, width, height, sort_order, created_at')
+      .single();
+    
+    if (dbError) {
+      // アップロード済みファイルを削除
+      await supabase.storage
+        .from('visit-photos')
+        .remove([storagePath]);
+      
+      console.error('Database error:', dbError);
+      return c.json({ error: 'Failed to save photo metadata' }, 500);
+    }
+    
+    // signed URLを生成
+    const { data: signedUrlData } = await supabase.storage
+      .from('visit-photos')
+      .createSignedUrl(storagePath, 3600);
+    
+    return c.json({
+      ...photoData,
+      signed_url: signedUrlData?.signedUrl || null
+    });
+    
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// GET /api/visits/:visitId/photos - 写真一覧取得
+app.get('/api/visits/:visitId/photos', async (c) => {
+  const supabase = c.get('supabase');
+  const visitId = c.req.param('visitId');
+  
+  try {
+    // 現在のユーザー情報を取得
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !userData.user) {
+      console.error('Auth error:', userError);
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+    
+    // 訪問が自分のものか確認
+    const { data: visitData, error: visitError } = await supabase
+      .from('visits')
+      .select('id')
+      .eq('id', visitId)
+      .eq('user_id', userData.user.id)
+      .single();
+    
+    if (visitError || !visitData) {
+      console.error('Visit verification failed:', { visitId, userId: userData.user.id, visitError });
+      return c.json({ error: 'Visit not found or access denied' }, 404);
+    }
+    
+    // 写真一覧を取得
+    const { data: photos, error } = await supabase
+      .from('visit_photos')
+      .select('id, storage_path, file_name, file_size_bytes, mime_type, is_primary, width, height, sort_order, created_at')
+      .eq('visit_id', visitId)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true });
+    
+    if (error) {
+      console.error('Error fetching photos:', error);
+      return c.json({ error: error.message }, 500);
+    }
+    
+    // 各写真にsigned URLを生成
+    const photosWithUrls = await Promise.all(
+      (photos || []).map(async (photo) => {
+        try {
+          const { data: signedUrlData } = await supabase.storage
+            .from('visit-photos')
+            .createSignedUrl(photo.storage_path, 3600); // 1時間有効
+          
+          return {
+            ...photo,
+            signed_url: signedUrlData?.signedUrl || null
+          };
+        } catch (err) {
+          console.error('Error creating signed URL for photo:', photo.id, err);
+          return {
+            ...photo,
+            signed_url: null
+          };
+        }
+      })
+    );
+    
+    return c.json({ photos: photosWithUrls });
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// PUT /api/visits/:visitId/photos/:photoId/main - メイン写真設定
+app.put('/api/visits/:visitId/photos/:photoId/main', async (c) => {
+  const supabase = c.get('supabase');
+  const visitId = c.req.param('visitId');
+  const photoId = c.req.param('photoId');
+  
+  try {
+    // 現在のユーザー情報を取得
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !userData.user) {
+      console.error('Auth error:', userError);
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+    
+    // 写真が存在し、ユーザーのものか確認
+    const { data: photoData, error: photoError } = await supabase
+      .from('visit_photos')
+      .select('id, visit_id')
+      .eq('id', photoId)
+      .eq('visit_id', visitId)
+      .single();
+    
+    if (photoError || !photoData) {
+      return c.json({ error: 'Photo not found or access denied' }, 404);
+    }
+    
+    // 訪問が自分のものか確認
+    const { data: visitData, error: visitError } = await supabase
+      .from('visits')
+      .select('id')
+      .eq('id', visitId)
+      .eq('user_id', userData.user.id)
+      .single();
+    
+    if (visitError || !visitData) {
+      return c.json({ error: 'Visit not found or access denied' }, 404);
+    }
+    
+    // 他のメイン写真を解除
+    await supabase
+      .from('visit_photos')
+      .update({ is_primary: false })
+      .eq('visit_id', visitId);
+    
+    // 指定された写真をメイン写真に設定
+    const { data: updatedPhoto, error: updateError } = await supabase
+      .from('visit_photos')
+      .update({ is_primary: true })
+      .eq('id', photoId)
+      .select('id, storage_path, file_name, file_size_bytes, mime_type, is_primary, width, height, sort_order, created_at')
+      .single();
+    
+    if (updateError) {
+      console.error('Update error:', updateError);
+      return c.json({ error: 'Failed to set primary photo' }, 500);
+    }
+    
+    // signed URLを生成
+    const { data: signedUrlData } = await supabase.storage
+      .from('visit-photos')
+      .createSignedUrl(updatedPhoto.storage_path, 3600);
+    
+    return c.json({
+      ...updatedPhoto,
+      signed_url: signedUrlData?.signedUrl || null
+    });
+    
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// DELETE /api/visits/:visitId/photos/:photoId - 写真削除
+app.delete('/api/visits/:visitId/photos/:photoId', async (c) => {
+  const supabase = c.get('supabase');
+  const visitId = c.req.param('visitId');
+  const photoId = c.req.param('photoId');
+  
+  try {
+    // 現在のユーザー情報を取得
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !userData.user) {
+      console.error('Auth error:', userError);
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+    
+    // 写真情報を取得（削除前にストレージパスが必要）
+    const { data: photoData, error: photoError } = await supabase
+      .from('visit_photos')
+      .select('id, visit_id, storage_path')
+      .eq('id', photoId)
+      .eq('visit_id', visitId)
+      .single();
+    
+    if (photoError || !photoData) {
+      return c.json({ error: 'Photo not found or access denied' }, 404);
+    }
+    
+    // 訪問が自分のものか確認
+    const { data: visitData, error: visitError } = await supabase
+      .from('visits')
+      .select('id')
+      .eq('id', visitId)
+      .eq('user_id', userData.user.id)
+      .single();
+    
+    if (visitError || !visitData) {
+      return c.json({ error: 'Visit not found or access denied' }, 404);
+    }
+    
+    // データベースから写真レコードを削除
+    const { error: deleteError } = await supabase
+      .from('visit_photos')
+      .delete()
+      .eq('id', photoId);
+    
+    if (deleteError) {
+      console.error('Database delete error:', deleteError);
+      return c.json({ error: 'Failed to delete photo record' }, 500);
+    }
+    
+    // Storageから画像ファイルを削除
+    const { error: storageError } = await supabase.storage
+      .from('visit-photos')
+      .remove([photoData.storage_path]);
+    
+    if (storageError) {
+      console.error('Storage delete error:', storageError);
+      // ストレージ削除エラーは警告として扱う（データベースは既に削除済み）
+    }
+    
+    return c.json({ message: 'Photo deleted successfully' });
+    
   } catch (err) {
     console.error('Unexpected error:', err);
     return c.json({ error: 'Internal server error' }, 500);
