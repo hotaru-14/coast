@@ -1,0 +1,22 @@
+{
+  "name": "Coast Tracker - 海岸線追跡アプリ",
+  "short_name": "Coast Tracker",
+  "description": "岩手県の海岸線を探索し、訪問履歴を記録するPWAアプリ",
+  "theme_color": "#DC2626",
+  "background_color": "#ffffff",
+  "display": "standalone",
+  "start_url": "/",
+  "scope": "/",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "32x32",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["travel", "lifestyle", "navigation"],
+  "lang": "ja",
+  "screenshots": []
+}
