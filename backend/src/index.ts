@@ -28,7 +28,7 @@ const app = new Hono<AppContext>();
 app.use('*', cors({
   origin: ['http://localhost:5173', 'http://localhost:5174'], // 複数のポートに対応
   allowHeaders: ['Authorization', 'Content-Type'],
-  allowMethods: ['POST', 'GET', 'OPTIONS'],
+  allowMethods: ['POST', 'GET', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true,
 }));
 
@@ -201,6 +201,256 @@ app.get('/api/coastlines', async (c) => {
     }));
 
     return c.json({ coastlines });
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// --- プロファイル管理エンドポイント ---
+
+// GET /api/profile - ユーザープロファイル取得
+app.get('/api/profile', async (c) => {
+  const supabase = c.get('supabase');
+  
+  try {
+    // 現在のユーザー情報を取得
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !userData.user) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+    
+    // プロファイル情報を取得
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('id, display_name, avatar_url, created_at')
+      .eq('id', userData.user.id)
+      .single();
+    
+    if (error && error.code !== 'PGRST116') { // PGRST116 = No rows returned
+      console.error('Error fetching profile:', error);
+      return c.json({ error: error.message }, 500);
+    }
+    
+    // プロファイルが存在しない場合はデフォルト値で作成
+    if (!data) {
+      const { data: newProfile, error: createError } = await supabase
+        .from('user_profiles')
+        .insert({ id: userData.user.id })
+        .select('id, display_name, avatar_url, created_at')
+        .single();
+        
+      if (createError) {
+        console.error('Error creating profile:', createError);
+        return c.json({ error: createError.message }, 500);
+      }
+      
+      return c.json(newProfile);
+    }
+    
+    return c.json(data);
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// PUT /api/profile - ユーザープロファイル更新
+app.put('/api/profile', async (c) => {
+  const supabase = c.get('supabase');
+  
+  try {
+    // 現在のユーザー情報を取得
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !userData.user) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+    
+    // リクエストボディを取得
+    const { display_name, avatar_url } = await c.req.json();
+    
+    // プロファイルを更新（upsert）
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .upsert({
+        id: userData.user.id,
+        display_name,
+        avatar_url,
+        updated_at: new Date().toISOString()
+      })
+      .select('id, display_name, avatar_url, created_at, updated_at')
+      .single();
+    
+    if (error) {
+      console.error('Error updating profile:', error);
+      return c.json({ error: error.message }, 500);
+    }
+    
+    return c.json(data);
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// --- コメント管理エンドポイント ---
+
+// GET /api/visits/:visitId/comment - 訪問のコメント取得
+app.get('/api/visits/:visitId/comment', async (c) => {
+  const supabase = c.get('supabase');
+  const visitId = c.req.param('visitId');
+  
+  try {
+    // 現在のユーザー情報を取得
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !userData.user) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+    
+    // 訪問が自分のものか確認
+    const { data: visitData, error: visitError } = await supabase
+      .from('visits')
+      .select('id')
+      .eq('id', visitId)
+      .eq('user_id', userData.user.id)
+      .single();
+    
+    if (visitError || !visitData) {
+      return c.json({ error: 'Visit not found or access denied' }, 404);
+    }
+    
+    // コメントを取得
+    const { data, error } = await supabase
+      .from('visit_comments')
+      .select('id, visit_id, title, content, created_at, updated_at')
+      .eq('visit_id', visitId)
+      .single();
+    
+    if (error && error.code !== 'PGRST116') { // PGRST116 = No rows returned
+      console.error('Error fetching comment:', error);
+      return c.json({ error: error.message }, 500);
+    }
+    
+    // コメントが存在しない場合はnullを返す
+    if (!data) {
+      return c.json(null);
+    }
+    
+    return c.json(data);
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// PUT /api/visits/:visitId/comment - コメント作成・更新
+app.put('/api/visits/:visitId/comment', async (c) => {
+  const supabase = c.get('supabase');
+  const visitId = c.req.param('visitId');
+  
+  try {
+    // 現在のユーザー情報を取得
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !userData.user) {
+      console.error('Auth error:', userError);
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+    
+    // 訪問が自分のものか確認
+    const { data: visitData, error: visitError } = await supabase
+      .from('visits')
+      .select('id')
+      .eq('id', visitId)
+      .eq('user_id', userData.user.id)
+      .single();
+    
+    if (visitError || !visitData) {
+      console.error('Visit verification failed:', { visitId, userId: userData.user.id, visitError });
+      return c.json({ error: 'Visit not found or access denied' }, 404);
+    }
+    
+    // リクエストボディを取得
+    const { title, content } = await c.req.json();
+    
+    // 既存のコメントを確認
+    const { data: existingComment } = await supabase
+      .from('visit_comments')
+      .select('id')
+      .eq('visit_id', visitId)
+      .single();
+
+    let data, error;
+    
+    if (existingComment) {
+      // 更新
+      ({ data, error } = await supabase
+        .from('visit_comments')
+        .update({ title, content })
+        .eq('visit_id', visitId)
+        .select('id, visit_id, title, content, created_at, updated_at')
+        .single());
+    } else {
+      // 新規作成
+      ({ data, error } = await supabase
+        .from('visit_comments')
+        .insert({ visit_id: visitId, title, content })
+        .select('id, visit_id, title, content, created_at, updated_at')
+        .single());
+    }
+    
+    if (error) {
+      console.error('Error upserting comment:', error);
+      return c.json({ error: error.message }, 500);
+    }
+    
+    return c.json(data);
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// DELETE /api/visits/:visitId/comment - コメント削除
+app.delete('/api/visits/:visitId/comment', async (c) => {
+  const supabase = c.get('supabase');
+  const visitId = c.req.param('visitId');
+  
+  try {
+    // 現在のユーザー情報を取得
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !userData.user) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+    
+    // 訪問が自分のものか確認
+    const { data: visitData, error: visitError } = await supabase
+      .from('visits')
+      .select('id')
+      .eq('id', visitId)
+      .eq('user_id', userData.user.id)
+      .single();
+    
+    if (visitError || !visitData) {
+      return c.json({ error: 'Visit not found or access denied' }, 404);
+    }
+    
+    // コメント削除
+    const { error } = await supabase
+      .from('visit_comments')
+      .delete()
+      .eq('visit_id', visitId);
+    
+    if (error) {
+      console.error('Error deleting comment:', error);
+      return c.json({ error: error.message }, 500);
+    }
+    
+    return c.json({ message: 'Comment deleted successfully' });
   } catch (err) {
     console.error('Unexpected error:', err);
     return c.json({ error: 'Internal server error' }, 500);
