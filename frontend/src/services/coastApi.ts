@@ -85,6 +85,31 @@ export interface UpsertCommentRequest {
   content?: string;
 }
 
+// 写真関連の型定義
+export interface VisitPhoto {
+  id: string;
+  visit_id: string;
+  storage_path: string;
+  file_name: string;
+  file_size_bytes: number;
+  mime_type: string;
+  is_primary: boolean;
+  width?: number;
+  height?: number;
+  sort_order: number;
+  created_at: string;
+  signed_url: string | null;
+}
+
+export interface PhotoUploadRequest {
+  file: File;
+  is_primary?: boolean;
+}
+
+export interface PhotosResponse {
+  photos: VisitPhoto[];
+}
+
 // APIクライアントクラス
 class CoastApiClient {
   private baseURL: string;
@@ -256,6 +281,132 @@ class CoastApiClient {
       return await response.json();
     } catch (error) {
       console.error('Update profile error:', error);
+      throw error;
+    }
+  }
+
+  // --- 写真管理API ---
+
+  // 写真一覧取得
+  async getPhotos(visitId: string): Promise<PhotosResponse> {
+    try {
+      const headers = await this.getAuthHeaders();
+      
+      const response = await fetch(`${this.baseURL}/api/visits/${visitId}/photos`, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('認証が必要です。ログインしてください。');
+        }
+        if (response.status === 404) {
+          throw new Error('訪問が見つからないか、アクセス権限がありません。');
+        }
+        throw new Error(`Failed to fetch photos: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Get photos error:', error);
+      throw error;
+    }
+  }
+
+  // 写真アップロード
+  async uploadPhoto(visitId: string, uploadRequest: PhotoUploadRequest): Promise<VisitPhoto> {
+    try {
+      // multipart/form-dataを作成
+      const formData = new FormData();
+      formData.append('file', uploadRequest.file);
+      formData.append('is_primary', String(uploadRequest.is_primary || false));
+
+      // 認証ヘッダーを取得（Content-Typeは除外、FormDataが自動設定）
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: HeadersInit = {};
+      
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
+      }
+      
+      const response = await fetch(`${this.baseURL}/api/visits/${visitId}/photos`, {
+        method: 'POST',
+        headers,
+        body: formData,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('認証が必要です。ログインしてください。');
+        }
+        if (response.status === 404) {
+          throw new Error('訪問が見つからないか、アクセス権限がありません。');
+        }
+        if (response.status === 400) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'アップロードエラー');
+        }
+        throw new Error(`Failed to upload photo: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Upload photo error:', error);
+      throw error;
+    }
+  }
+
+  // メイン写真設定
+  async setPrimaryPhoto(visitId: string, photoId: string): Promise<VisitPhoto> {
+    try {
+      const headers = await this.getAuthHeaders();
+      
+      const response = await fetch(`${this.baseURL}/api/visits/${visitId}/photos/${photoId}/main`, {
+        method: 'PUT',
+        headers,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('認証が必要です。ログインしてください。');
+        }
+        if (response.status === 404) {
+          throw new Error('写真または訪問が見つからないか、アクセス権限がありません。');
+        }
+        throw new Error(`Failed to set primary photo: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Set primary photo error:', error);
+      throw error;
+    }
+  }
+
+  // 写真削除
+  async deletePhoto(visitId: string, photoId: string): Promise<{ message: string }> {
+    try {
+      const headers = await this.getAuthHeaders();
+      
+      const response = await fetch(`${this.baseURL}/api/visits/${visitId}/photos/${photoId}`, {
+        method: 'DELETE',
+        headers,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('認証が必要です。ログインしてください。');
+        }
+        if (response.status === 404) {
+          throw new Error('写真または訪問が見つからないか、アクセス権限がありません。');
+        }
+        throw new Error(`Failed to delete photo: ${response.status}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Delete photo error:', error);
       throw error;
     }
   }
